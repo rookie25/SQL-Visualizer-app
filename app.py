@@ -3,6 +3,8 @@ import sqlite3
 import pandas as pd
 import re
 import sqlparse
+import time
+from html import escape
 
 def get_schema(conn):
     cur = conn.cursor()
@@ -14,6 +16,32 @@ def get_schema(conn):
         cols = [col[1] for col in cur.fetchall()]
         schema[t] = cols
     return schema
+
+def render_query_code(query, highlight_line=None):
+    # Split query into lines
+    lines = query.strip().split('\n')
+    html_lines = []
+    for i, line in enumerate(lines):
+        text = escape(line)
+        if i == highlight_line:
+            html_lines.append(f'<div style="background-color:#fffbcc;padding:2px"><code>{text}</code></div>')
+        else:
+            html_lines.append(f'<div><code>{text}</code></div>')
+    return '<div style="border:1px solid #ddd;padding:4px;">' + ''.join(html_lines) + '</div>'
+
+def render_table_html(df, highlight_row=None, highlight_col=None):
+    # Convert df to html table
+    html = df.to_html(index=False, escape=False)
+    # Inject CSS to highlight
+    style = '<style>'
+    if highlight_row is not None:
+        # highlight entire row
+        style += f'tr:nth-child({highlight_row+1}) td {{ background-color: #ffecec; }}'
+    if highlight_col is not None:
+        # highlight entire column
+        style += f'td:nth-child({highlight_col+1}) {{ background-color: #ecffecec; }}'
+    style += '</style>'
+    return style + html
 
 # Create an in-memory SQLite database
 conn = sqlite3.connect(':memory:')
@@ -94,25 +122,66 @@ query = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
 
 # Add a button to execute the query
 if st.button("Run Query"):
+    # Parse steps as before
     steps = parse_sql_steps(query)
-    for idx, desc in enumerate(steps, start=1):
-        with st.expander(f"🔹 Step {idx}"):
-            # Display clause icon + description
-            if desc.lower().startswith("select"):
-                st.info(desc)       # blue
-            elif desc.lower().startswith("load table"):
-                st.success(desc)    # green
-            elif desc.lower().startswith("apply filter"):
-                st.warning(desc)    # yellow
-            else:
-                st.write(desc)
+
+    # Detect COUNT
+    if re.search(r'\bCOUNT\(', query, flags=re.IGNORECASE):
+        # Extract column and table from the query
+        m = re.search(r'COUNT\((\w+)\).*FROM\s+(\w+)', query, flags=re.IGNORECASE)
+        if m:
+            col = m.group(1)
+            table = m.group(2)
+        else:
+            # Fallback: use the first FROM step
+            table = steps[1].split('→')[1].strip()
+            col = '*'
+        # Animate counting
+        rows = conn.execute(f"SELECT {col} FROM {table}").fetchall()
+        placeholder_metric = st.empty()
+        progress_bar = st.progress(0)
+
+        for idx, _ in enumerate(rows, start=1):
+            # update metric and progress
+            placeholder_metric.metric(
+                label=f"Counting `{col}` in `{table}`",
+                value=idx,
+                delta=f"/ {len(rows)}"
+            )
+            progress_bar.progress(idx / len(rows))
+            time.sleep(0.5)
+
+        # cleanup and show final result
+        progress_bar.empty()
+        st.success(f"COUNT result: {len(rows)}")
+    else:
+        # Existing timeline animation
+        timeline_placeholder = st.empty()
+        stages = [s.split('→')[0].strip().upper() for s in steps] + ['RESULT']
+        for i in range(len(stages)):
+            cols = timeline_placeholder.columns(len(stages))
+            for j, name in enumerate(stages):
+                if j == i:
+                    cols[j].markdown(f"**🔵 {name}**")
+                else:
+                    cols[j].markdown(name)
+            time.sleep(0.5)
+        timeline_placeholder.empty()
         
-    try:
-        # Execute the query and fetch results
+        # New code + table highlight animation
         df = pd.read_sql_query(query, conn)
-        st.dataframe(df)
-    except Exception as e:
-        st.error(f"Error executing query: {str(e)}")
+        code_ph = st.empty()
+        table_ph = st.empty()
+        for idx in range(len(df)):
+            # Highlight code: first clause line (0), then second (1), etc.
+            code_ph.markdown(render_query_code(query, highlight_line=min(idx, len(query.split('\n'))-1)), unsafe_allow_html=True)
+            # Highlight the idx-th row
+            table_ph.markdown(render_table_html(df, highlight_row=idx), unsafe_allow_html=True)
+            time.sleep(0.5)
+        # Final: show full code+table
+        code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
+        table_ph.markdown(render_table_html(df), unsafe_allow_html=True)
+        st.success("Done!")
 
 # Close the database connection when the app is closed
 conn.close() 
