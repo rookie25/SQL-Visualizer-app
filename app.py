@@ -44,6 +44,25 @@ for table, cols in schema.items():
     st.sidebar.subheader(table)
     st.sidebar.write(", ".join(cols))
 
+# Add Create New Table section to sidebar
+st.sidebar.header("Create New Table")
+new_table = st.sidebar.text_input("Table Name")
+cols_input = st.sidebar.text_area(
+    "Columns (SQL syntax, e.g. id INTEGER, name TEXT, grade TEXT)"
+)
+if st.sidebar.button("Create Table"):
+    try:
+        conn.execute(f"CREATE TABLE {new_table} ({cols_input});")
+        conn.commit()
+        st.sidebar.success(f"Table '{new_table}' created.")
+    except Exception as e:
+        st.sidebar.error(f"Error: {e}")
+    # Refresh and re-display schema
+    schema = get_schema(conn)
+    for table, cols in schema.items():
+        st.sidebar.subheader(table)
+        st.sidebar.write(", ".join(cols))
+
 # Set page title
 st.title("SQL Visualizer")
 
