@@ -4,8 +4,16 @@ import pandas as pd
 import re
 import sqlparse
 
-# Set page title
-st.title("SQL Visualizer")
+def get_schema(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [row[0] for row in cur.fetchall()]
+    schema = {}
+    for t in tables:
+        cur.execute(f"PRAGMA table_info({t});")
+        cols = [col[1] for col in cur.fetchall()]
+        schema[t] = cols
+    return schema
 
 # Create an in-memory SQLite database
 conn = sqlite3.connect(':memory:')
@@ -28,6 +36,16 @@ sample_data = [
 ]
 cursor.executemany('INSERT INTO students VALUES (?, ?, ?)', sample_data)
 conn.commit()
+
+# Add Schema Explorer to sidebar
+st.sidebar.header("Schema Explorer")
+schema = get_schema(conn)
+for table, cols in schema.items():
+    st.sidebar.subheader(table)
+    st.sidebar.write(", ".join(cols))
+
+# Set page title
+st.title("SQL Visualizer")
 
 def parse_sql_steps(query: str) -> list[str]:
     # Split on common SQL clauses
