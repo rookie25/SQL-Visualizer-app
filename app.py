@@ -43,6 +43,51 @@ def render_table_html(df, highlight_row=None, highlight_col=None):
     style += '</style>'
     return style + html
 
+def parse_sql_steps(query: str) -> list[str]:
+    # Split on common SQL clauses
+    parts = re.split(
+        r'(\bSELECT\b|\bFROM\b|\bWHERE\b|\bJOIN\b|\bGROUP BY\b|\bORDER BY\b)',
+        query, flags=re.IGNORECASE
+    )
+    steps = []
+    i = 1
+    while i < len(parts) - 1:
+        clause = parts[i].strip().upper()
+        content = parts[i+1].strip().rstrip(';')
+        if clause == 'SELECT':
+            desc = f"Select columns → {content}"
+        elif clause == 'FROM':
+            desc = f"Load table → {content}"
+        elif clause == 'WHERE':
+            desc = f"Apply filter → {content}"
+        else:
+            desc = f"{clause} → {content}"
+        steps.append(desc)
+        i += 2
+    return steps
+
+def generate_execution_trace(query: str, conn) -> tuple[list, pd.DataFrame]:
+    # 1) Split SQL into lines
+    lines = query.strip().split('\n')
+    trace = []
+    # 2) Clause events: highlight each clause line
+    for idx, line in enumerate(lines):
+        for kw in ['SELECT','FROM','WHERE','JOIN','GROUP BY','ORDER BY','COUNT','SUM','AVG','MIN','MAX']:
+            if re.search(rf'\b{kw}\b', line, flags=re.IGNORECASE):
+                trace.append({'type':'clause','line':idx})
+                break
+    # 3) Execute query into DataFrame
+    df = pd.read_sql_query(query, conn)
+    # 4) Row/cell events
+    for i, row in enumerate(df.values.tolist()):
+        trace.append({'type':'row_start','row':i})
+        for j in range(len(row)):
+            trace.append({'type':'cell','row':i,'col':j})
+        trace.append({'type':'row_end','row':i})
+    # 5) Completion event
+    trace.append({'type':'complete'})
+    return trace, df
+
 # Create an in-memory SQLite database
 conn = sqlite3.connect(':memory:')
 cursor = conn.cursor()
@@ -94,94 +139,56 @@ if st.sidebar.button("Create Table"):
 # Set page title
 st.title("SQL Visualizer")
 
-def parse_sql_steps(query: str) -> list[str]:
-    # Split on common SQL clauses
-    parts = re.split(
-        r'(\bSELECT\b|\bFROM\b|\bWHERE\b|\bJOIN\b|\bGROUP BY\b|\bORDER BY\b)',
-        query, flags=re.IGNORECASE
-    )
-    steps = []
-    i = 1
-    while i < len(parts) - 1:
-        clause = parts[i].strip().upper()
-        content = parts[i+1].strip().rstrip(';')
-        if clause == 'SELECT':
-            desc = f"Select columns → {content}"
-        elif clause == 'FROM':
-            desc = f"Load table → {content}"
-        elif clause == 'WHERE':
-            desc = f"Apply filter → {content}"
-        else:
-            desc = f"{clause} → {content}"
-        steps.append(desc)
-        i += 2
-    return steps
+# Create two columns for the main layout
+col1, col2 = st.columns(2)
 
-# Create a text area for SQL query input
-query = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
+# Left column: SQL editor
+with col1:
+    query = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
+    run_button = st.button("Run Query")
 
-# Add a button to execute the query
-if st.button("Run Query"):
-    # Parse steps as before
-    steps = parse_sql_steps(query)
+# Right column: Code and table panels
+with col2:
+    code_ph = st.empty()
+    table_ph = st.empty()
 
-    # Detect COUNT
-    if re.search(r'\bCOUNT\(', query, flags=re.IGNORECASE):
-        # Extract column and table from the query
-        m = re.search(r'COUNT\((\w+)\).*FROM\s+(\w+)', query, flags=re.IGNORECASE)
-        if m:
-            col = m.group(1)
-            table = m.group(2)
-        else:
-            # Fallback: use the first FROM step
-            table = steps[1].split('→')[1].strip()
-            col = '*'
-        # Animate counting
-        rows = conn.execute(f"SELECT {col} FROM {table}").fetchall()
-        placeholder_metric = st.empty()
-        progress_bar = st.progress(0)
+# Execute query when button is clicked
+if run_button:
+    try:
+        # Generate trace and data
+        trace, df = generate_execution_trace(query, conn)
 
-        for idx, _ in enumerate(rows, start=1):
-            # update metric and progress
-            placeholder_metric.metric(
-                label=f"Counting `{col}` in `{table}`",
-                value=idx,
-                delta=f"/ {len(rows)}"
-            )
-            progress_bar.progress(idx / len(rows))
+        # Step through events
+        for event in trace:
+            typ = event['type']
+            if typ == 'clause':
+                # Highlight the SQL line
+                code_ph.markdown(
+                    render_query_code(query, highlight_line=event['line']),
+                    unsafe_allow_html=True
+                )
+            elif typ == 'row_start':
+                # Highlight the current row
+                table_ph.markdown(
+                    render_table_html(df, highlight_row=event['row']),
+                    unsafe_allow_html=True
+                )
+            elif typ == 'cell':
+                # Highlight a specific cell
+                table_ph.markdown(
+                    render_table_html(df, highlight_row=event['row'], highlight_col=event['col']),
+                    unsafe_allow_html=True
+                )
+            # (You can add special logic on 'row_end' if desired)
             time.sleep(0.5)
 
-        # cleanup and show final result
-        progress_bar.empty()
-        st.success(f"COUNT result: {len(rows)}")
-    else:
-        # Existing timeline animation
-        timeline_placeholder = st.empty()
-        stages = [s.split('→')[0].strip().upper() for s in steps] + ['RESULT']
-        for i in range(len(stages)):
-            cols = timeline_placeholder.columns(len(stages))
-            for j, name in enumerate(stages):
-                if j == i:
-                    cols[j].markdown(f"**🔵 {name}**")
-                else:
-                    cols[j].markdown(name)
-            time.sleep(0.5)
-        timeline_placeholder.empty()
-        
-        # New code + table highlight animation
-        df = pd.read_sql_query(query, conn)
-        code_ph = st.empty()
-        table_ph = st.empty()
-        for idx in range(len(df)):
-            # Highlight code: first clause line (0), then second (1), etc.
-            code_ph.markdown(render_query_code(query, highlight_line=min(idx, len(query.split('\n'))-1)), unsafe_allow_html=True)
-            # Highlight the idx-th row
-            table_ph.markdown(render_table_html(df, highlight_row=idx), unsafe_allow_html=True)
-            time.sleep(0.5)
-        # Final: show full code+table
+        # Final display (un-highlighted)
         code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
         table_ph.markdown(render_table_html(df), unsafe_allow_html=True)
-        st.success("Done!")
+        st.success("Execution complete")
+        
+    except Exception as e:
+        st.error(f"Error executing query: {str(e)}")
 
 # Close the database connection when the app is closed
 conn.close() 
