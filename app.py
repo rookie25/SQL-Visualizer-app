@@ -66,27 +66,43 @@ def parse_sql_steps(query: str) -> list[str]:
         i += 2
     return steps
 
-def generate_execution_trace(query: str, conn) -> tuple[list, pd.DataFrame]:
-    # 1) Split SQL into lines
+def generate_execution_trace(query: str, conn):
     lines = query.strip().split('\n')
     trace = []
-    # 2) Clause events: highlight each clause line
+    # Clause events
     for idx, line in enumerate(lines):
         for kw in ['SELECT','FROM','WHERE','JOIN','GROUP BY','ORDER BY','COUNT','SUM','AVG','MIN','MAX']:
             if re.search(rf'\b{kw}\b', line, flags=re.IGNORECASE):
                 trace.append({'type':'clause','line':idx})
                 break
-    # 3) Execute query into DataFrame
-    df = pd.read_sql_query(query, conn)
-    # 4) Row/cell events
-    for i, row in enumerate(df.values.tolist()):
-        trace.append({'type':'row_start','row':i})
+
+    # Detect aggregate, allowing optional AS alias
+    m = re.search(
+        r'\b(AVG|SUM|COUNT|MIN|MAX)\((\w+)\)(?:\s+AS\s+\w+)?\s+FROM\s+(\w+)',
+        query, flags=re.IGNORECASE
+    )
+    # Always scan full base table cells
+    if m:
+        fn, col, tbl = m.group(1).upper(), m.group(2), m.group(3)
+    else:
+        # fallback: use first FROM clause to find table name
+        from_match = re.search(r'\bFROM\s+(\w+)', query, flags=re.IGNORECASE)
+        tbl = from_match.group(1) if from_match else None
+        col = None
+
+    df_base = pd.read_sql_query(f"SELECT * FROM {tbl}", conn)
+    for i, row in enumerate(df_base.values.tolist()):
         for j in range(len(row)):
-            trace.append({'type':'cell','row':i,'col':j})
-        trace.append({'type':'row_end','row':i})
-    # 5) Completion event
+            trace.append({'type':'cell','mode':'base','row':i,'col':j})
+
+    # If aggregate detected, animate its final result cell
+    df_agg = None
+    if m:
+        df_agg = pd.read_sql_query(query, conn)
+        trace.append({'type':'cell','mode':'agg','row':0,'col':0})
+
     trace.append({'type':'complete'})
-    return trace, df
+    return trace, df_base, df_agg
 
 # Create an in-memory SQLite database
 conn = sqlite3.connect(':memory:')
@@ -155,36 +171,34 @@ with col2:
 # Execute query when button is clicked
 if run_button:
     try:
-        # Generate trace and data
-        trace, df = generate_execution_trace(query, conn)
+        trace, df_base, df_agg = generate_execution_trace(query, conn)
+        code_ph  = st.empty()
+        table_ph = st.empty()
 
-        # Step through events
-        for event in trace:
-            typ = event['type']
-            if typ == 'clause':
-                # Highlight the SQL line
+        for ev in trace:
+            if ev['type'] == 'clause':
                 code_ph.markdown(
-                    render_query_code(query, highlight_line=event['line']),
+                    render_query_code(query, highlight_line=ev['line']),
                     unsafe_allow_html=True
                 )
-            elif typ == 'row_start':
-                # Highlight the current row
+            elif ev.get('mode') == 'base':
                 table_ph.markdown(
-                    render_table_html(df, highlight_row=event['row']),
+                    render_table_html(df_base, highlight_row=ev['row'], highlight_col=ev['col']),
                     unsafe_allow_html=True
                 )
-            elif typ == 'cell':
-                # Highlight a specific cell
+            elif ev.get('mode') == 'agg':
                 table_ph.markdown(
-                    render_table_html(df, highlight_row=event['row'], highlight_col=event['col']),
+                    render_table_html(df_agg, highlight_row=ev['row'], highlight_col=ev['col']),
                     unsafe_allow_html=True
                 )
-            # (You can add special logic on 'row_end' if desired)
             time.sleep(0.5)
 
-        # Final display (un-highlighted)
+        # Final display: show the aggregate if present, else the base table
         code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
-        table_ph.markdown(render_table_html(df), unsafe_allow_html=True)
+        table_ph.markdown(
+            render_table_html(df_agg if df_agg is not None else df_base),
+            unsafe_allow_html=True
+        )
         st.success("Execution complete")
         
     except Exception as e:
