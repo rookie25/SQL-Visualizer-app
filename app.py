@@ -6,6 +6,8 @@ import sqlparse
 import time
 from html import escape
 
+st.set_page_config(layout="wide", page_title="SQL Visualizer")
+
 def get_schema(conn):
     cur = conn.cursor()
     cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -154,6 +156,7 @@ if st.sidebar.button("Create Table"):
 
 # Set page title
 st.title("SQL Visualizer")
+st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_html=True)
 
 # Create two columns for the main layout
 col1, col2 = st.columns(2)
