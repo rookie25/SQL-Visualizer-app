@@ -5,8 +5,21 @@ import re
 import sqlparse
 import time
 from html import escape
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
+
+st.markdown("""
+<style>
+  .section-container {
+    border: 1px solid #ddd;
+    padding: 16px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+    background-color: #fafafa;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 def get_schema(conn):
     cur = conn.cursor()
@@ -31,7 +44,7 @@ def render_query_code(query, highlight_line=None):
             html_lines.append(f'<div><code>{text}</code></div>')
     return '<div style="border:1px solid #ddd;padding:4px;">' + ''.join(html_lines) + '</div>'
 
-def render_table_html(df, highlight_row=None, highlight_col=None):
+def render_table_html(df, highlight_row=None, highlight_col=None, highlight_class=None):
     # Convert df to html table
     html = df.to_html(index=False, escape=False)
     # Inject CSS to highlight
@@ -42,6 +55,8 @@ def render_table_html(df, highlight_row=None, highlight_col=None):
     if highlight_col is not None:
         # highlight entire column
         style += f'td:nth-child({highlight_col+1}) {{ background-color: #ecffecec; }}'
+    if highlight_class:
+        style += f'{highlight_class} {{ background-color: #ffecec; }}'
     style += '</style>'
     return style + html
 
@@ -158,54 +173,57 @@ if st.sidebar.button("Create Table"):
 st.title("SQL Visualizer")
 st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_html=True)
 
-# Create two columns for the main layout
-col1, col2 = st.columns(2)
+# Editor section
+st.markdown('<div class="section-container">', unsafe_allow_html=True)
+query      = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
+run_button = st.button("Run Query")
+st.markdown('</div>', unsafe_allow_html=True)
 
-# Left column: SQL editor
-with col1:
-    query = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
-    run_button = st.button("Run Query")
+if run_button:
+    # capture start time
+    start = time.time()
 
-# Right column: Code and table panels
-with col2:
-    code_ph = st.empty()
+    # generate execution trace
+    trace, df_base, df_agg = generate_execution_trace(query, conn)
+
+    # placeholders for animation
+    code_ph  = st.empty()
     table_ph = st.empty()
 
-# Execute query when button is clicked
-if run_button:
-    try:
-        trace, df_base, df_agg = generate_execution_trace(query, conn)
-        code_ph  = st.empty()
-        table_ph = st.empty()
+    # animation loop
+    for ev in trace:
+        if ev["type"] == "clause":
+            code_ph.markdown(
+                render_query_code(query, highlight_line=ev["line"]),
+                unsafe_allow_html=True
+            )
+        elif ev["type"] == "cell":
+            mode = ev['mode']
+            css  = 'base-highlight' if mode == 'base' else 'agg-highlight'
+            df   = df_base if mode == 'base' else df_agg
 
-        for ev in trace:
-            if ev['type'] == 'clause':
-                code_ph.markdown(
-                    render_query_code(query, highlight_line=ev['line']),
-                    unsafe_allow_html=True
-                )
-            elif ev.get('mode') == 'base':
-                table_ph.markdown(
-                    render_table_html(df_base, highlight_row=ev['row'], highlight_col=ev['col']),
-                    unsafe_allow_html=True
-                )
-            elif ev.get('mode') == 'agg':
-                table_ph.markdown(
-                    render_table_html(df_agg, highlight_row=ev['row'], highlight_col=ev['col']),
-                    unsafe_allow_html=True
-                )
-            time.sleep(0.5)
+            table_html = render_table_html(
+                df,
+                highlight_row=ev['row'],
+                highlight_col=ev['col'],
+                highlight_class=css
+            )
+            table_ph.markdown(table_html, unsafe_allow_html=True)
+        # ignore any other event types
+        time.sleep(0.5)
 
-        # Final display: show the aggregate if present, else the base table
-        code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
-        table_ph.markdown(
-            render_table_html(df_agg if df_agg is not None else df_base),
-            unsafe_allow_html=True
-        )
-        st.success("Execution complete")
-        
-    except Exception as e:
-        st.error(f"Error executing query: {str(e)}")
+    # final display of code + table
+    code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
+    final_df   = df_agg if df_agg is not None else df_base
+    table_ph.markdown(render_table_html(final_df), unsafe_allow_html=True)
+
+    # query summary & results grid
+    duration = time.time() - start
+    st.subheader("Query Results")
+    st.markdown(f"**{len(final_df)} rows returned in {duration:.2f}s**")
+    st.dataframe(final_df)
+
+    st.success("Execution complete")
 
 # Close the database connection when the app is closed
 conn.close() 
