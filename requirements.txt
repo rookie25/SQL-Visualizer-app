@@ -2,4 +2,5 @@ streamlit
 pandas
 sqlparse
 beautifulsoup4
-streamlit-aggrid 
+streamlit-aggrid
+sqlalchemy 

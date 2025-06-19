@@ -1,11 +1,12 @@
 import streamlit as st
-import sqlite3
+import sqlalchemy
 import pandas as pd
 import re
 import sqlparse
 import time
 from html import escape
 from st_aggrid import AgGrid, GridOptionsBuilder
+from sqlalchemy import text
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
 
@@ -22,12 +23,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def get_schema(conn):
-    cur = conn.cursor()
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    cur = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';"))
     tables = [row[0] for row in cur.fetchall()]
     schema = {}
     for t in tables:
-        cur.execute(f"PRAGMA table_info({t});")
+        cur = conn.execute(text(f"PRAGMA table_info({t});"))
         cols = [col[1] for col in cur.fetchall()]
         schema[t] = cols
     return schema
@@ -121,27 +121,28 @@ def generate_execution_trace(query: str, conn):
     trace.append({'type':'complete'})
     return trace, df_base, df_agg
 
-# Create an in-memory SQLite database
-conn = sqlite3.connect(':memory:')
-cursor = conn.cursor()
+# Sidebar Connection Profile
+st.sidebar.header("Connection Profile")
+mode = st.sidebar.selectbox("SQLite Mode", ["In-Memory", "File-Based"])
+if mode == "In-Memory":
+    engine = sqlalchemy.create_engine("sqlite:///:memory:")
+else:
+    db_path = st.sidebar.text_input("SQLite file path", "data.db")
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}")
+conn = engine.connect()
 
-# Create the students table
-cursor.execute('''
-    CREATE TABLE students (
+# Ensure sample table exists
+conn.execute(text("""
+    CREATE TABLE IF NOT EXISTS students (
         id INTEGER PRIMARY KEY,
         name TEXT,
         grade TEXT
     )
-''')
-
-# Insert sample data
-sample_data = [
-    (1, 'Alice', 'A'),
-    (2, 'Bob', 'B'),
-    (3, 'Charlie', 'C')
-]
-cursor.executemany('INSERT INTO students VALUES (?, ?, ?)', sample_data)
-conn.commit()
+"""))
+conn.execute(text("""
+    INSERT OR IGNORE INTO students (id,name,grade) VALUES
+    (1,'Alice','A'),(2,'Bob','B'),(3,'Charlie','C')
+"""))
 
 # Add Schema Explorer to sidebar
 st.sidebar.header("Schema Explorer")
