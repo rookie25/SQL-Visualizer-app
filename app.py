@@ -5,8 +5,9 @@ import re
 import sqlparse
 import time
 from html import escape
-from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from sqlalchemy import text
+import json
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
 
@@ -151,6 +152,17 @@ for table, cols in schema.items():
     st.sidebar.subheader(table)
     st.sidebar.write(", ".join(cols))
 
+# Object Explorer sidebar tree (immediately after Schema Explorer)
+st.sidebar.header("Object Explorer")
+schema = get_schema(conn)
+for table, cols in schema.items():
+    with st.sidebar.expander(table):
+        # Button to load the table
+        if st.button(f"Select * from {table}", key=f"btn_{table}"):
+            st.session_state["query"] = f"SELECT * FROM {table};"
+        # List columns
+        st.write("Columns: " + ", ".join(cols))
+
 # Add Create New Table section to sidebar
 st.sidebar.header("Create New Table")
 new_table = st.sidebar.text_input("Table Name")
@@ -176,7 +188,11 @@ st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_
 
 # Editor section
 st.markdown('<div class="section-container">', unsafe_allow_html=True)
-query      = st.text_area("Enter your SQL query:", "SELECT * FROM students;")
+query = st.text_area(
+    "Enter your SQL query:",
+    value=st.session_state.get("query", "SELECT * FROM students;"),
+    key="query"
+)
 run_button = st.button("Run Query")
 st.markdown('</div>', unsafe_allow_html=True)
 
