@@ -8,6 +8,7 @@ from html import escape
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from sqlalchemy import text
 import json
+from streamlit_ace import st_ace
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
 
@@ -186,15 +187,29 @@ if st.sidebar.button("Create Table"):
 st.title("SQL Visualizer")
 st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_html=True)
 
-# Editor section
-st.markdown('<div class="section-container">', unsafe_allow_html=True)
-query = st.text_area(
-    "Enter your SQL query:",
-    value=st.session_state.get("query", "SELECT * FROM students;"),
-    key="query"
+# --- SQL Editor (ACE) ---
+# Restore previous query or default
+initial = st.session_state.get("query", "SELECT * FROM students;")
+
+# Render ACE editor
+query = st_ace(
+    value=initial,
+    language="sql",
+    theme="github",
+    key="query_ace",
+    font_size=14,
+    tab_size=2,
+    show_gutter=True,
+    min_lines=5,
+    max_lines=15,
+    auto_update=True
 )
+
+# Persist back into session_state
+st.session_state["query"] = query
+
+# Run button
 run_button = st.button("Run Query")
-st.markdown('</div>', unsafe_allow_html=True)
 
 if run_button:
     # capture start time
