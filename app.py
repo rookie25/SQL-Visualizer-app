@@ -12,6 +12,10 @@ from streamlit_ace import st_ace
 import io
 from urllib.parse import urlencode
 
+# --- Query History Initialization ---
+if "history" not in st.session_state:
+    st.session_state.history = []
+
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
 
 st.markdown("""
@@ -185,6 +189,15 @@ if st.sidebar.button("Create Table"):
         st.sidebar.subheader(table)
         st.sidebar.write(", ".join(cols))
 
+# --- Query History Panel ---
+st.sidebar.header("Query History")
+# Show most recent first
+for i, past_query in enumerate(reversed(st.session_state.history), start=1):
+    with st.sidebar.expander(f"#{i}", expanded=False):
+        st.write(f"""```sql\n{past_query}\n```""")
+        if st.button("Load into Editor", key=f"load_{i}"):
+            st.session_state.query = past_query
+
 # Set page title
 st.title("SQL Visualizer")
 st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_html=True)
@@ -214,6 +227,9 @@ st.session_state["query"] = query
 run_button = st.button("Run Query")
 
 if run_button:
+    # Save to history (avoid duplicates)
+    if query not in st.session_state.history:
+        st.session_state.history.append(query)
     # capture start time
     start = time.time()
 
