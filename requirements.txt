@@ -4,4 +4,6 @@ sqlparse
 beautifulsoup4
 streamlit-aggrid
 sqlalchemy
-streamlit-ace 
+streamlit-ace
+io
+json 

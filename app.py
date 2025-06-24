@@ -9,6 +9,8 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from sqlalchemy import text
 import json
 from streamlit_ace import st_ace
+import io
+from urllib.parse import urlencode
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
 
@@ -256,6 +258,30 @@ if run_button:
     st.dataframe(final_df)
 
     st.success("Execution complete")
+
+    # --- Export Buttons ---
+    # CSV
+    csv_bytes = final_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download CSV",
+        data=csv_bytes,
+        file_name="query_results.csv",
+        mime="text/csv"
+    )
+    # JSON
+    json_str = final_df.to_json(orient="records")
+    st.download_button(
+        "Download JSON",
+        data=json_str,
+        file_name="query_results.json",
+        mime="application/json"
+    )
+
+    # --- Shareable Link ---
+    # Encode the current query as a URL param
+    params = urlencode({"query": query})
+    share_suffix = f"?{params}"
+    st.text_input("Shareable Link (append to app URL)", share_suffix, help="Copy & paste this at the end of your app's URL to share your query.")
 
 # Close the database connection when the app is closed
 conn.close() 
