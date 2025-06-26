@@ -12,11 +12,30 @@ from streamlit_ace import st_ace
 import io
 from urllib.parse import urlencode
 
+# --- User Preferences Initialization ---
+if "settings" not in st.session_state:
+    st.session_state["settings"] = {
+        "theme": "light",
+        "animation_speed": 0.5,
+        "font_size": 14
+    }
+
 # --- Query History Initialization ---
 if "history" not in st.session_state:
     st.session_state.history = []
 
 st.set_page_config(layout="wide", page_title="SQL Visualizer")
+
+# Apply Dark Theme CSS if needed
+if st.session_state["settings"]["theme"] == "dark":
+    st.markdown(
+        """<style>
+        body { background-color: #1e1e1e; color: #fafafa; }
+        .section-container { background-color: #333333; color: #fafafa; }
+        .stDataFrame, .ag-theme-streamlit { background-color: #2e2e2e; }
+        </style>""",
+        unsafe_allow_html=True
+    )
 
 st.markdown("""
 <style>
@@ -198,6 +217,30 @@ for i, past_query in enumerate(reversed(st.session_state.history), start=1):
         if st.button("Load into Editor", key=f"load_{i}"):
             st.session_state.query = past_query
 
+# --- Settings Panel ---
+with st.sidebar.expander("⚙️ Settings", expanded=False):
+    theme = st.selectbox(
+        "Theme", ["light", "dark"],
+        index=0 if st.session_state["settings"]["theme"]=="light" else 1,
+        key="settings_theme"
+    )
+    speed = st.slider(
+        "Animation Speed (s)",
+        min_value=0.1, max_value=1.0, step=0.1,
+        value=st.session_state["settings"]["animation_speed"],
+        key="settings_animation_speed"
+    )
+    fsize = st.number_input(
+        "Font Size (px)",
+        min_value=10, max_value=24,
+        value=st.session_state["settings"]["font_size"],
+        key="settings_font_size"
+    )
+    # save back
+    st.session_state["settings"]["theme"] = theme
+    st.session_state["settings"]["animation_speed"] = speed
+    st.session_state["settings"]["font_size"] = fsize
+
 # Set page title
 st.title("SQL Visualizer")
 st.markdown("A web tool to visualize SQL execution step-by-step.", unsafe_allow_html=True)
@@ -210,9 +253,9 @@ initial = st.session_state.get("query", "SELECT * FROM students;")
 query = st_ace(
     value=initial,
     language="sql",
-    theme="github",
+    theme="github" if st.session_state["settings"]["theme"]=="light" else "monokai",
     key="query_ace",
-    font_size=14,
+    font_size=st.session_state["settings"]["font_size"],
     tab_size=2,
     show_gutter=True,
     min_lines=5,
@@ -260,7 +303,7 @@ if run_button:
             )
             table_ph.markdown(table_html, unsafe_allow_html=True)
         # ignore any other event types
-        time.sleep(0.5)
+        time.sleep(st.session_state["settings"]["animation_speed"])
 
     # final display of code + table
     code_ph.markdown(render_query_code(query), unsafe_allow_html=True)
